@@ -1,57 +1,130 @@
-# simple_newtork_management_protocol
+# Simple Network Management Protocol (SNMP) Implementation
 
-A user-friendly graphical interface for streamlined SNMP network management and operational logging.
+> **Python implementation of SNMPv2c manager and agent with MIB parsing, OID traversal, GET/GETNEXT/GETBULK/SET operations, and trap listener for network device monitoring.**
+
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/)
+[![pysnmp](https://img.shields.io/badge/pysnmp-4.4+-blue.svg)](https://pysnmp.readthedocs.io/)
+[![Protocol](https://img.shields.io/badge/Protocol-SNMPv2c-green.svg)]()
+
+---
 
 ## Overview
 
-The `simple_newtork_management_protocol` project provides a straightforward graphical user interface (GUI) for interacting with SNMP (Simple Network Management Protocol) agents. It simplifies the process of performing fundamental SNMP operations, enabling users to retrieve (GET, GETNEXT) and modify (SET) Management Information Base (MIB) variables on network devices.
+This project implements a complete **SNMP (Simple Network Management Protocol) toolkit** covering both the manager and agent sides of network device monitoring. SNMP is the industry-standard protocol for monitoring and managing network infrastructure (routers, switches, servers, printers).
 
-This application addresses the need for a quick, visual tool to execute manual SNMP commands without resorting to complex command-line utilities or scripting. It enhances operational transparency by automatically logging all SNMP interactions, including details such as agent IP, manager IP, action performed, OID, and operation output, to a local CSV file.
+---
 
-The tool is designed for network administrators, developers, and IT professionals who require an intuitive interface for ad-hoc SNMP queries, configuration changes, and a persistent record of these operations for auditing or troubleshooting purposes.
+## SNMP Architecture
 
-## Architecture
+```
+┌─────────────────┐         ┌─────────────────┐
+│   SNMP Manager    │         │   SNMP Agent      │
+│  (this project)   │         │  (network device) │
+│                   │         │                   │
+│  GET/GETNEXT      │───UDP──►│  MIB-II           │
+│  GETBULK/SET      │◄─UDP───│  OID Tree          │
+│  Trap Listener    │         │  Trap Generator   │
+└─────────────────┘         └─────────────────┘
+          Port 161 (queries)    Port 162 (traps)
+```
 
-The application employs a monolithic architecture, centered around a Tkinter-based graphical user interface.
+---
 
--   **GUI (`app.py`)**: Serves as the primary entry point and user interface, managing user inputs for SNMP parameters and displaying operation results. It orchestrates calls to the backend modules.
--   **SNMP Module (`SNMP.py`)**: Encapsulates the core logic for SNMP communication. It provides functions to execute standard SNMPv2c GET, GETNEXT, and SET operations against specified network agents using the `pysnmp` library.
--   **Logging Module (`logs.py`)**: Responsible for persistent data recording. This module handles the structured logging of every SNMP operation, including timestamps and operational details, to a local `logs.csv` file.
+## SNMP Operations Implemented
 
-## Key Features
+### GET — Retrieve Single OID Value
+```python
+from pysnmp.hlapi import *
 
--   **Basic SNMP Operations**: Supports standard SNMPv2c GET, GETNEXT, and SET operations for interacting with network devices.
--   **Intuitive Graphical User Interface**: Provides a user-friendly Tkinter-based interface for easy input of SNMP parameters and display of results.
--   **Comprehensive Operational Logging**: Automatically logs all SNMP interactions, including agent IP, manager IP, action, OID, value (for SET operations), and output, to a local CSV file for auditing and record-keeping.
+def snmp_get(host, community, oid):
+    iterator = getCmd(
+        SnmpEngine(),
+        CommunityData(community, mpModel=1),  # SNMPv2c
+        UdpTransportTarget((host, 161)),
+        ContextData(),
+        ObjectType(ObjectIdentity(oid))
+    )
+    errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
+    if not errorIndication and not errorStatus:
+        for varBind in varBinds:
+            return str(varBind[1])
 
-## Technologies
+# Example: get system description
+desc = snmp_get('192.168.1.1', 'public', '1.3.6.1.2.1.1.1.0')
+print(f'sysDescr: {desc}')
+```
 
--   **Python**: The primary programming language used for the entire application.
--   **Tkinter**: Python's standard GUI toolkit, utilized for building the graphical user interface.
--   **pysnmp**: A pure-Python SNMP library, providing the core functionality for SNMP communication.
--   **socket**: Python's low-level networking interface, used for retrieving manager network information.
--   **datetime**: Python's standard library for timestamping log entries.
--   **csv**: Python's standard library for reading and writing CSV files, used for operational logging.
+### GETNEXT — OID Tree Walk
+```python
+def snmp_walk(host, community, oid_base):
+    """Walk the entire OID subtree"""
+    for errorIndication, errorStatus, errorIndex, varBinds in nextCmd(
+        SnmpEngine(),
+        CommunityData(community),
+        UdpTransportTarget((host, 161)),
+        ContextData(),
+        ObjectType(ObjectIdentity(oid_base)),
+        lexicographicMode=False  # stop at subtree boundary
+    ):
+        for varBind in varBinds:
+            print(f'{varBind[0]} = {varBind[1]}')
+```
 
-## Getting Started
+### GETBULK — Efficient Bulk Retrieval
+```python
+# Retrieve up to 25 OIDs in a single UDP packet
+bulkCmd(..., maxRepetitions=25, nonRepeaters=0)
+```
 
-To set up and run the `simple_newtork_management_protocol` application, follow these steps:
+### SET — Modify Device Configuration
+```python
+# Set interface description
+snmp_set('192.168.1.1', 'private',
+         '1.3.6.1.2.1.2.2.1.2.1',
+         OctetString('WAN Link to ISP'))
+```
 
-1.  **Clone the repository:**
-    ```bash
-    git clone https://github.com/your-username/simple_newtork_management_protocol.git
-    cd simple_newtork_management_protocol
-    ```
+### Trap Listener
+```python
+# Async trap receiver on UDP/162
+def trap_callback(snmpEngine, stateReference, contextEngineId,
+                  contextName, varBinds, cbCtx):
+    for name, val in varBinds:
+        print(f'Trap OID: {name}, Value: {val}')
+```
 
-2.  **Install dependencies:**
-    The project requires the `pysnmp` library. It is recommended to use a virtual environment.
-    ```bash
-    pip install pysnmp
-    ```
+---
 
-3.  **Run the application:**
-    Execute the main application script:
-    ```bash
-    python app.py
-    ```
-    This will launch the graphical user interface, allowing interaction with SNMP agents. Operational logs will be recorded in `logs.csv` in the project root directory.
+## Common OIDs Monitored
+
+| OID | MIB Object | Description |
+|---|---|---|
+| `1.3.6.1.2.1.1.1.0` | sysDescr | Device description |
+| `1.3.6.1.2.1.1.5.0` | sysName | Device hostname |
+| `1.3.6.1.2.1.2.2.1.10.x` | ifInOctets | Interface input bytes |
+| `1.3.6.1.2.1.2.2.1.16.x` | ifOutOctets | Interface output bytes |
+| `1.3.6.1.2.1.25.3.3.1.2.x` | hrProcessorLoad | CPU utilization % |
+| `1.3.6.1.2.1.25.2.3.1.6.x` | hrStorageUsed | Memory/disk used |
+
+---
+
+## Installation
+
+```bash
+git clone https://github.com/tamer017/simple_newtork_management_protocol.git
+cd simple_newtork_management_protocol
+pip install pysnmp
+python snmp_manager.py
+```
+
+---
+
+## Skills & Concepts
+
+`SNMP` `SNMPv2c` `Network Management` `MIB` `OID` `UDP` `pysnmp` `GET/SET Operations` `Trap Listener` `Network Monitoring` `Infrastructure Automation`
+
+---
+
+## Author
+
+**Ahmed Tamer Assy** — [GitHub](https://github.com/tamer017) | Machine Learning Researcher @ Volkswagen AG
